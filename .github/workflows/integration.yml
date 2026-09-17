@@ -1,0 +1,35 @@
+# End-to-end integration: docker-compose stack, bronze -> silver ->
+# sklearn training, with Postgres registry assertions.
+# Manual trigger only -- ~15-20 min on a shared runner.
+name: integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    name: bronze -> silver -> train (1-month slice)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      WORKER_MEMORY: 2G
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: uv sync
+      - name: Build and start the stack
+        run: docker compose up -d --build
+      - name: Fetch one month of raw data
+        run: uv run python scripts/fetch_data.py --months 1
+      - name: Run the integration tests (bronze + silver + train)
+        run: uv run pytest tests/integration -q -m integration -o addopts=""
+        env:
+          PGPASSWORD: sparkfs
+      - name: Dump pipeline logs on failure
+        if: failure()
+        run: docker compose logs --tail=200

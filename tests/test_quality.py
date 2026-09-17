@@ -215,6 +215,54 @@ def test_run_gates_passes_on_good_data(spark: SparkSession) -> None:
     assert all(r.passed for r in results)
 
 
+def test_partition_floor_fails_on_shrunken_partition(spark: SparkSession, tmp_path: Path) -> None:
+    """Each partition must keep >= floor_ratio of its previous row count."""
+    out = tmp_path / "prior"
+    prior = _df(
+        spark,
+        [(1, "2023-01-01"), (2, "2023-01-01"), (3, "2023-01-02"), (4, "2023-01-02")],
+        "id LONG, event_date STRING",
+    )
+    prior.write.mode("overwrite").partitionBy("event_date").parquet(str(out))
+    # 2023-01-02 keeps only 1 of 2 rows -> below a 0.9 floor
+    current = _df(
+        spark,
+        [(1, "2023-01-01"), (2, "2023-01-01"), (3, "2023-01-02")],
+        "id LONG, event_date STRING",
+    )
+    result = checks.check_partition_floor(spark, current, str(out), "event_date", 0.9)
+    assert not result.passed
+    assert "1 partitions below floor" in result.measured
+
+    # healthy: same counts pass
+    ok = checks.check_partition_floor(spark, prior, str(out), "event_date", 0.9)
+    assert ok.passed
+
+
+def test_quality_registry_records_rows() -> None:
+    from quality import registry as quality_registry
+
+    conn = MagicMock()
+    quality_registry.record_result(
+        conn,
+        run_id="run-1",
+        feature_group="g",
+        check_name="null_rate:x",
+        status="failed",
+        measured_value="0.5",
+        threshold="<= 0.1",
+    )
+    cur = conn.cursor.return_value.__enter__.return_value
+    sql, params = cur.execute.call_args.args
+    assert "INSERT INTO quality_results" in sql
+    assert params[0] == "run-1"
+    assert params[1] == "g"
+    assert params[2] == "null_rate:x"
+    assert params[3] == "failed"
+    assert params[4] == "0.5"
+    assert params[5] == "<= 0.1"
+
+
 def test_real_contracts_exist_for_pipeline_tables() -> None:
     for table in (
         "bronze.trips",

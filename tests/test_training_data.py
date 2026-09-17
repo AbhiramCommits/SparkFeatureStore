@@ -102,3 +102,40 @@ def test_null_labels_dropped(trip_table: Path) -> None:
     assert sum(counts.values()) == len(table) - null_labels
     for frame in _frames.values():
         assert frame[data.LABEL_COL].notna().all()
+
+
+def test_s3a_path_builds_filesystem_from_conf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The S3 branch of _read_table is driven entirely by conf/<env>.yaml."""
+    import pyarrow as pa
+
+    fs_kwargs: dict = {}
+
+    def fake_s3fs(**kwargs) -> object:
+        fs_kwargs.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(pa.fs, "S3FileSystem", fake_s3fs)
+    monkeypatch.setattr(
+        pq,
+        "read_table",
+        lambda key, filesystem, columns: pa.table({"a": [1]}),
+    )
+    table = data._read_table("s3a://datalake/silver/trip_features", env="docker", columns=["a"])
+    assert table.num_rows == 1
+    assert fs_kwargs["endpoint_override"] == "minio:9000"
+    assert fs_kwargs["scheme"] == "http"
+    assert fs_kwargs["access_key"] == "minioadmin"
+    assert fs_kwargs["secret_key"] == "minioadmin"
+
+
+def test_local_path_does_not_build_s3_filesystem(
+    trip_table: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pyarrow as pa
+
+    def boom(*_args, **_kwargs) -> object:
+        raise AssertionError("S3FileSystem must not be used for local paths")
+
+    monkeypatch.setattr(pa.fs, "S3FileSystem", boom)
+    table = data._read_table(str(trip_table), columns=["tip_pct"])
+    assert table.num_rows > 0

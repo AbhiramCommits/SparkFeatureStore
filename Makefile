@@ -16,7 +16,7 @@ else
 RUN_PY := uv run
 endif
 
-.PHONY: help up down fetch bronze bronze-local silver silver-local bench-skew bench-partitions train-sklearn train-torch k8s-up k8s-seed k8s-bronze k8s-features k8s-train k8s-down test lint format venv
+.PHONY: help up down fetch bronze bronze-local silver silver-local bench-skew bench-partitions train-sklearn train-torch k8s-up k8s-seed k8s-bronze k8s-features k8s-train k8s-down test integration coverage typecheck lint format venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -140,6 +140,19 @@ k8s-down: ## Delete the kind cluster
 
 test: ## Run unit tests
 	$(RUN_PY) -m pytest tests -q
+
+integration: ## End-to-end integration test on the compose stack (make up fetch first)
+	$(RUN_PY) -m pytest tests/integration -q -m integration
+
+coverage: ## Unit-test coverage on non-Spark-session modules (>= 75%)
+	$(RUN_PY) -m pytest tests -q \
+	  --cov=common.config --cov=common.retry --cov=common.logging \
+	  --cov=training.data --cov=training.artifacts \
+	  --cov=quality.registry --cov=features.registry \
+	  --cov-fail-under=75 --cov-report=term-missing
+
+typecheck: ## mypy on the typed modules
+	$(RUN_PY) -m mypy
 
 lint: ## Lint with ruff + check formatting with black
 	$(RUN_PY) -m ruff check .

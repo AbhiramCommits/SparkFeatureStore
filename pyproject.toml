@@ -20,8 +20,11 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black==25.1.0",
+    "mypy==1.14.1",
     "pytest==8.3.4",
+    "pytest-cov==6.0.0",
     "ruff==0.9.6",
+    "types-pyyaml==6.0.12.20241230",
 ]
 
 [tool.black]
@@ -39,3 +42,22 @@ select = ["E", "F", "W", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = ["-m", "not integration"]
+markers = [
+    "integration: end-to-end pipeline tests (require the docker-compose stack)",
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = [
+    "common/config.py",
+    "common/logging.py",
+    "common/retry.py",
+    "features/registry.py",
+    "quality/registry.py",
+    "training/artifacts.py",
+    "training/data.py",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true

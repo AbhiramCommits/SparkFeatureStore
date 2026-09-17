@@ -1,0 +1,66 @@
+# CI: lint + typecheck, unit tests, docker builds on every push.
+# Integration tests (docker-compose end-to-end) live in integration.yml
+# behind workflow_dispatch -- too slow for every push.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: uv sync
+      - name: ruff
+        run: uv run ruff check .
+      - name: black --check
+        run: uv run black --check .
+      - name: mypy
+        run: uv run mypy
+
+  unit-tests:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Spark 3.5 supports Java 8/11/17 (the session-scoped test fixture
+      # auto-selects a compatible JDK via JAVA_HOME).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install dependencies
+        run: uv sync
+      - name: Run unit tests (no integration)
+        run: uv run pytest tests -q
+      - name: Coverage on non-Spark modules
+        run: |
+          uv run pytest tests -q \
+            --cov=common.config --cov=common.retry --cov=common.logging \
+            --cov=training.data --cov=training.artifacts \
+            --cov=quality.registry --cov=features.registry \
+            --cov-fail-under=75 --cov-report=term-missing
+
+  docker-build:
+    name: docker build both images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build spark image
+        run: docker build -f docker/Dockerfile.spark -t sparkfeaturestore/spark:3.5.9 .
+      - name: Build train image
+        run: docker build -f docker/Dockerfile.train -t sparkfeaturestore/train:0.1.0 .

@@ -22,7 +22,7 @@ services:
     hostname: spark-worker-1
     depends_on:
       - spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 3G --webui-port 8081
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory ${WORKER_MEMORY:-3G} --webui-port 8081
     ports:
       - "8081:8081"
     volumes:
@@ -34,7 +34,7 @@ services:
     hostname: spark-worker-2
     depends_on:
       - spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 3G --webui-port 8082
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory ${WORKER_MEMORY:-3G} --webui-port 8082
     ports:
       - "8082:8082"
     volumes:

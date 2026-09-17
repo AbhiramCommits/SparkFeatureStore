@@ -11,5 +11,7 @@ joblib==1.4.2
 torch==2.5.1
 # Dev
 pytest==8.3.4
+pytest-cov==6.0.0
 ruff==0.9.6
 black==25.1.0
+mypy==1.14.1
