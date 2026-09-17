@@ -28,3 +28,6 @@ artifacts/
 
 # Benchmark outputs (generated)
 bench/results/*.csv
+
+# Coverage output
+.coverage
