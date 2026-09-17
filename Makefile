@@ -9,7 +9,7 @@ else
 RUN_PY := uv run
 endif
 
-.PHONY: help up down fetch bronze bronze-local silver silver-local bench-skew bench-partitions test lint format venv
+.PHONY: help up down fetch bronze bronze-local silver silver-local bench-skew bench-partitions train-sklearn train-torch test lint format venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -64,6 +64,12 @@ bench-partitions: ## Sweep spark.sql.shuffle.partitions x AQE (8 runs, ~10-15 mi
 	      --partitions $$p --aqe $$a; \
 	  done; \
 	done
+
+train-sklearn: ## Train the sklearn gradient-boosting model on silver features
+	$(RUN_PY) training/sklearn_job.py --env local
+
+train-torch: ## Train the PyTorch MLP on silver features
+	$(RUN_PY) training/torch_job.py --env local
 
 test: ## Run unit tests
 	$(RUN_PY) -m pytest tests -q

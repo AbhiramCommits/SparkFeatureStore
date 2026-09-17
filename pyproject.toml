@@ -5,11 +5,16 @@ description = "Distributed feature pipeline and ML training platform on Apache S
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "joblib==1.4.2",
+    "numpy==2.2.1",
+    "pandas==2.2.3",
     "psycopg[binary]==3.2.3",
     "pyarrow==18.1.0",
     "pyspark==3.5.9",
     "pyyaml==6.0.2",
     "requests==2.32.3",
+    "scikit-learn==1.6.1",
+    "torch==2.5.1",
 ]
 
 [dependency-groups]

@@ -23,5 +23,8 @@ metastore_db/
 derby.log
 spark-warehouse/
 
+# Training artifacts (generated)
+artifacts/
+
 # Benchmark outputs (generated)
 bench/results/*.csv

@@ -42,7 +42,9 @@ s3a:
 
 postgres:
   host: localhost
-  port: 5432
+  # 5439: a local Postgres already occupies 5432 on this dev machine;
+  # the container publishes on 5439 (see docker-compose.yml).
+  port: 5439
   database: feature_store
   user: sparkfs
   password: sparkfs

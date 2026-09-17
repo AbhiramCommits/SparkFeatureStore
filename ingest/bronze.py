@@ -32,6 +32,10 @@ from common.config import load_config, resolve_path  # noqa: E402
 from common.io import read_parquet, table_path  # noqa: E402
 from common.logging import get_logger, setup_logging  # noqa: E402
 from common.spark import build_spark  # noqa: E402
+from features import registry as feature_registry  # noqa: E402
+from quality import checks as quality_checks  # noqa: E402
+from quality import contracts as quality_contracts  # noqa: E402
+from quality import registry as quality_registry  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -131,6 +135,31 @@ def run(
     df.cache()
     bronze_rows = df.count()
     log.info("Bronze rows after transform: %d", bronze_rows)
+
+    # Quality gates run BEFORE the write: a violation aborts and leaves the
+    # previous bronze table untouched.
+    conn = None
+    try:
+        conn = retry.retry(lambda: feature_registry.connect(env=env))
+        feature_registry.ensure_table(conn)
+        quality_registry.ensure_table(conn)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Postgres unavailable, quality results will not be recorded: %s", exc)
+        conn = None
+    quality_checks.run_gates(
+        spark,
+        conn,
+        feature_group="bronze.trips",
+        df=df,
+        contract=quality_contracts.CONTRACTS["bronze.trips"],
+        existing_path=resolve_path(bronze_path),
+        event_date_col=EVENT_DATE_COL,
+        min_rows=max(1, int(raw_rows * 0.5)),
+        partition_floor_ratio=0.9,
+        null_rate_ceilings={"pickup_datetime": 0.0, "event_date": 0.0, "ingest_ts": 0.0},
+    )
+    if conn:
+        conn.close()
 
     # Staging + atomic promotion: downstream readers never see a
     # half-written partition (see common/atomic.py).

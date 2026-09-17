@@ -70,6 +70,31 @@ Point-in-time correctness (hard requirement):
 Output: partitioned Parquet under
 `silver/<group>/event_date=YYYY-MM-DD/`.
 
+## Quality gates
+
+Before ANY write, every group passes gates (`quality/contracts.py`,
+`quality/checks.py`): declarative schema contracts (columns, Spark types,
+nullability, value ranges), row-count floor vs the prior partition, null-rate
+ceilings, duplicate primary-key count = 0, freshness (max event_ts within the
+expected window). A violation raises `DataQualityError`, records a failure
+row in Postgres `quality_results`, aborts promotion from staging and exits
+non-zero — the previous good partition stays untouched.
+
+## Training
+
+Two jobs read the SAME silver tables with an identical time-based
+train/val/test split (`training/data.py`, never random):
+
+```bash
+make train-sklearn   # HistGradientBoostingRegressor pipeline
+make train-torch     # PyTorch MLP with embeddings for zone/vendor ids
+```
+
+Each run writes `artifacts/<framework>/<run_id>/` (model file, metrics.json,
+feature list, hyperparameters, git sha, feature_run_ids) and registers a row
+in Postgres `model_runs` (FK to `feature_runs`). Metrics: RMSE/MAE/R2 on the
+held-out test window vs a predict-the-mean baseline.
+
 ## Layout
 
 ```

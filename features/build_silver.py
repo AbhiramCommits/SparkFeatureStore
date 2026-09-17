@@ -42,6 +42,9 @@ from common.logging import get_logger, setup_logging  # noqa: E402
 from common.spark import build_spark  # noqa: E402
 from features import point_in_time as pit  # noqa: E402
 from features import registry  # noqa: E402
+from quality import checks as quality_checks  # noqa: E402
+from quality import contracts as quality_contracts  # noqa: E402
+from quality import registry as quality_registry  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -204,17 +207,18 @@ def build_and_register(
     spark,
     conn,
     name: str,
+    spec: dict,
     df: DataFrame,
     input_paths: list[str],
     output: str,
     run_key: str,
     force: bool = False,
 ) -> int | None:
-    """Count, write via staging + atomic promote, and record the run.
+    """Gate, count, write via staging + atomic promote, record the run.
 
     A completed ``run_key`` makes this a no-op unless ``force`` is set.
-    Writes never leave a half-written partition visible: data lands in a
-    staging dir and is promoted partition-by-partition (see common/atomic).
+    Quality gates run BEFORE the write: on violation a DataQualityError
+    aborts promotion and the previous good table stays untouched.
     """
     output_path = resolve_path(output)
     spark_conf = dict(spark.sparkContext.getConf().getAll())
@@ -234,9 +238,24 @@ def build_and_register(
         run_id = retry.retry(
             lambda: registry.start_run(conn, name, input_paths, output_path, spark_conf, run_key)
         )
+    quality = spec.get("quality", {})
     try:
         df.cache()
         n = retry.retry(lambda: df.count())
+        quality_checks.run_gates(
+            spark,
+            conn,
+            feature_group=name,
+            run_id=run_id,
+            df=df,
+            contract=quality_contracts.CONTRACTS.get(f"silver.{name}"),
+            existing_path=output_path,
+            event_date_col=EVENT_DATE_COL,
+            min_rows=quality.get("min_rows"),
+            partition_floor_ratio=quality.get("partition_floor_ratio"),
+            null_rate_ceilings=quality.get("null_rate_ceilings"),
+            freshness=quality.get("freshness"),
+        )
         retry.retry(
             lambda: atomic.atomic_write_parquet(
                 spark,
@@ -304,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_registry:
         conn = retry.retry(lambda: registry.connect(env=args.env))
         registry.ensure_table(conn)
+        quality_registry.ensure_table(conn)
         log.info("Connected to Postgres feature_runs registry")
 
     bronze_path = resolve_path(table_path(cfg["paths"]["bronze"], "trips"))
@@ -328,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                 spark,
                 conn,
                 "pickup_zone_demand",
+                demand_spec,
                 demand,
                 [bronze_path],
                 demand_output,
@@ -350,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
                 spark,
                 conn,
                 "driver_trip_history",
+                driver_spec,
                 driver,
                 [bronze_path],
                 driver_output,
@@ -373,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
                 spark,
                 conn,
                 "trip_features",
+                trip_spec,
                 trips,
                 [bronze_path, demand_path, driver_path],
                 trip_output,

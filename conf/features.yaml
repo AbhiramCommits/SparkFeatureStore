@@ -7,6 +7,9 @@
 # aggregations: fn is "count" (counts rows in the trailing frame; col is
 #   informational and ignored) or "avg" (mean of col).
 #   Output column name: {prefix}_{window_name}.
+# quality: data-quality gates run BEFORE the write (see quality/checks.py).
+#   A failing gate raises DataQualityError, records a failure row in
+#   quality_results, and the staged output is never promoted.
 feature_groups:
   pickup_zone_demand:
     entity_key: [pu_location_id]
@@ -21,6 +24,16 @@ feature_groups:
       - {fn: count, col: fare_amount, prefix: pu_pickup_count}
       - {fn: avg, col: fare_amount, prefix: pu_mean_fare}
     output: silver/pickup_zone_demand
+    quality:
+      min_rows: 2000000
+      partition_floor_ratio: 0.9
+      null_rate_ceilings:
+        pickup_datetime: 0.0
+        event_date: 0.0
+      freshness:
+        ts_col: pickup_datetime
+        lower: "2023-01-01T00:00:00"
+        upper: "2023-02-10T00:00:00"
 
   driver_trip_history:
     entity_key: [vendor_id]
@@ -36,6 +49,17 @@ feature_groups:
       - {fn: avg, col: trip_distance, prefix: driver_mean_trip_distance}
       - {fn: avg, col: tip_pct, prefix: driver_mean_tip_ratio}
     output: silver/driver_trip_history
+    quality:
+      min_rows: 50
+      partition_floor_ratio: 0.9
+      null_rate_ceilings:
+        vendor_id: 0.0
+        pickup_datetime: 0.0
+        event_date: 0.0
+      freshness:
+        ts_col: pickup_datetime
+        lower: "2023-01-01T00:00:00"
+        upper: "2023-02-10T00:00:00"
 
   trip_features:
     entity_key: [vendor_id, pu_location_id, pickup_datetime]
@@ -46,3 +70,15 @@ feature_groups:
       - {feature_group: pickup_zone_demand, keys: [pu_location_id], tolerance_seconds: 0, prefix: pu}
       - {feature_group: driver_trip_history, keys: [vendor_id], tolerance_seconds: 86400, prefix: driver}
     output: silver/trip_features
+    quality:
+      min_rows: 2000000
+      partition_floor_ratio: 0.9
+      null_rate_ceilings:
+        tip_pct: 0.05
+        driver_trip_count_7d: 0.30
+        pickup_datetime: 0.0
+        event_date: 0.0
+      freshness:
+        ts_col: pickup_datetime
+        lower: "2023-01-01T00:00:00"
+        upper: "2023-02-10T00:00:00"

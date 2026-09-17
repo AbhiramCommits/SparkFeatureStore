@@ -74,7 +74,7 @@ services:
       POSTGRES_PASSWORD: sparkfs
       POSTGRES_DB: feature_store
     ports:
-      - "5432:5432"
+      - "5439:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
