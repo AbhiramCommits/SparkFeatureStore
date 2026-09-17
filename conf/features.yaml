@@ -1,0 +1,48 @@
+# Silver feature group definitions.
+#
+# windows: start_offset/end_offset in SECONDS relative to the current row's
+#   event timestamp (negative = past). Frames are strict: they always end
+#   BEFORE T (end_offset < 0), so aggregates never include same-timestamp
+#   or future records.
+# aggregations: fn is "count" (counts rows in the trailing frame; col is
+#   informational and ignored) or "avg" (mean of col).
+#   Output column name: {prefix}_{window_name}.
+feature_groups:
+  pickup_zone_demand:
+    entity_key: [pu_location_id]
+    source: bronze/trips
+    event_ts_col: pickup_datetime
+    event_date_col: event_date
+    windows:
+      - {name: 1h, start_offset: -3600, end_offset: -1}
+      - {name: 6h, start_offset: -21600, end_offset: -1}
+      - {name: 24h, start_offset: -86400, end_offset: -1}
+    aggregations:
+      - {fn: count, col: fare_amount, prefix: pu_pickup_count}
+      - {fn: avg, col: fare_amount, prefix: pu_mean_fare}
+    output: silver/pickup_zone_demand
+
+  driver_trip_history:
+    entity_key: [vendor_id]
+    grain: day
+    source: bronze/trips
+    event_ts_col: pickup_datetime
+    event_date_col: event_date
+    windows:
+      - {name: 7d, start_offset: -604800, end_offset: -86400}
+      - {name: 30d, start_offset: -2592000, end_offset: -86400}
+    aggregations:
+      - {fn: count, col: trip_distance, prefix: driver_trip_count}
+      - {fn: avg, col: trip_distance, prefix: driver_mean_trip_distance}
+      - {fn: avg, col: tip_pct, prefix: driver_mean_tip_ratio}
+    output: silver/driver_trip_history
+
+  trip_features:
+    entity_key: [vendor_id, pu_location_id, pickup_datetime]
+    source: bronze/trips
+    event_ts_col: pickup_datetime
+    event_date_col: event_date
+    joins:
+      - {feature_group: pickup_zone_demand, keys: [pu_location_id], tolerance_seconds: 0, prefix: pu}
+      - {feature_group: driver_trip_history, keys: [vendor_id], tolerance_seconds: 86400, prefix: driver}
+    output: silver/trip_features

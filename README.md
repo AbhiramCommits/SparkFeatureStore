@@ -43,6 +43,33 @@ flowchart LR
 Pipeline: **raw -> bronze -> silver feature tables -> training** with schema
 contracts and data-quality gates in `quality/`.
 
+## Silver feature layer
+
+Feature groups are declared in `conf/features.yaml` (entity key, source,
+window spec, aggregations, output path) and built with `make silver`:
+
+| Group | Grain | Features |
+|---|---|---|
+| `pickup_zone_demand` | per pickup event | per PULocationID trailing pickup counts + mean fare over 1h/6h/24h |
+| `driver_trip_history` | vendor/day | trip count, mean trip distance, mean tip ratio over 7d/30d |
+| `trip_features` | per trip | as-of join of both groups + `tip_pct` label (tip/fare, clipped [0,1]) |
+
+Point-in-time correctness (hard requirement):
+
+* trailing aggregates are Spark window functions over `rangeBetween` on a
+  unix-seconds column -- never a naive groupBy join; frames end at
+  `T-1` second (event grain) or `T-1` day (day grain), so same-timestamp
+  and future rows never leak (`features/point_in_time.py`);
+* `as_of_join(spine, feature_df, ts_col, keys, tolerance)` is a backward
+  as-of join that matches the most recent feature row at or before the
+  spine timestamp and never looks forward;
+* every run is registered in Postgres `feature_runs` (run_id,
+  feature_group, row_count, input_paths, output_path, spark_conf_json,
+  git_sha, started_at, finished_at, status) via `features/registry.py`.
+
+Output: partitioned Parquet under
+`silver/<group>/event_date=YYYY-MM-DD/`.
+
 ## Layout
 
 ```
@@ -65,7 +92,8 @@ data/         downloaded datasets + pipeline outputs (gitignored)
 make up       # build + start spark-master, 2 workers, minio, postgres
 make fetch    # download 1 month (Jan 2023, ~150 MB); MONTHS=12 for all 2023
 make bronze   # run bronze ingest on the Spark cluster
-make test     # unit tests
+make silver   # build silver feature groups + register runs in Postgres
+make test     # unit tests (incl. point-in-time correctness)
 make lint     # ruff + black checks
 ```
 

@@ -4,5 +4,5 @@
 FROM apache/spark:3.5.9-python3
 
 USER root
-RUN python3 -m pip install --no-cache-dir "pyyaml==6.0.2"
+RUN python3 -m pip install --no-cache-dir "pyyaml==6.0.2" "psycopg[binary]==3.2.3"
 USER spark

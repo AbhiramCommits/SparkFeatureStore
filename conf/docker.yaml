@@ -21,8 +21,8 @@ spark:
       executor_memory: 2g
     cluster:
       master: "spark://spark-master:7077"
-      driver_memory: 1g
-      executor_memory: 1g
+      driver_memory: 2g
+      executor_memory: 2g
       executor_cores: 2
     k8s:
       master: "k8s://https://kubernetes.default.svc:443"
@@ -37,3 +37,10 @@ s3a:
   secret_key: minioadmin
   path_style_access: true
   ssl_enabled: false
+
+postgres:
+  host: postgres
+  port: 5432
+  database: feature_store
+  user: sparkfs
+  password: sparkfs

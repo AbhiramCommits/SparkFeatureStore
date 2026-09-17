@@ -9,7 +9,7 @@ else
 RUN_PY := uv run
 endif
 
-.PHONY: help up down fetch bronze bronze-local test lint format venv
+.PHONY: help up down fetch bronze bronze-local silver silver-local test lint format venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -37,6 +37,17 @@ bronze: ## Run bronze ingest on the docker spark cluster (make up && make fetch 
 
 bronze-local: ## Run bronze ingest in local[*] mode on the host (needs Java 8/11/17)
 	$(RUN_PY) ingest/bronze.py --env local --profile local
+
+silver: ## Build silver feature groups on the docker spark cluster (make up && make bronze first)
+	mkdir -p data/silver
+	chmod -R a+rwX data
+	docker compose exec -T spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--deploy-mode client \
+		/opt/sparkfeaturestore/features/build_silver.py --env docker --profile cluster
+
+silver-local: ## Build silver features in local[*] mode on the host
+	$(RUN_PY) features/build_silver.py --env local --profile local
 
 test: ## Run unit tests
 	$(RUN_PY) -m pytest tests -q

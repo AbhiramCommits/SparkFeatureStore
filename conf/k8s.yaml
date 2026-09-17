@@ -44,3 +44,10 @@ s3a:
   secret_key: minioadmin
   path_style_access: true
   ssl_enabled: false
+
+postgres:
+  host: postgres.postgres.svc.cluster.local
+  port: 5432
+  database: feature_store
+  user: sparkfs
+  password: sparkfs
