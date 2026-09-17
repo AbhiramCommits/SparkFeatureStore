@@ -1,0 +1,41 @@
+# Configuration for local development (running on the host machine).
+# Select with APP_ENV=local or --env local (this is the default).
+environment: local
+
+paths:
+  raw: data/raw
+  bronze: data/bronze
+  silver: data/silver
+  models: data/models
+
+spark:
+  app_name: sparkfeaturestore
+  default_profile: local
+  shuffle_partitions: 16
+  log_level: WARN
+  profiles:
+    local:
+      # Local multi-threaded mode (no cluster required).
+      master: "local[*]"
+      driver_memory: 2g
+      executor_memory: 2g
+    cluster:
+      # Standalone Spark cluster (docker-compose: spark-master + 2 workers).
+      master: "spark://spark-master:7077"
+      driver_memory: 1g
+      executor_memory: 1g
+      executor_cores: 2
+    k8s:
+      # Spark on Kubernetes (cluster mode).
+      master: "k8s://https://kubernetes.default.svc:443"
+      driver_memory: 2g
+      executor_memory: 4g
+      executor_cores: 2
+
+s3a:
+  enabled: true
+  endpoint: "http://localhost:9000"
+  access_key: minioadmin
+  secret_key: minioadmin
+  path_style_access: true
+  ssl_enabled: false

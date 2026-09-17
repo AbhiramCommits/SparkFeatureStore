@@ -1,0 +1,88 @@
+name: sparkfeaturestore
+
+services:
+  spark-master:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.spark
+    image: sparkfeaturestore/spark:3.5.9
+    container_name: spark-master
+    hostname: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master -h spark-master --port 7077 --webui-port 8080
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+      - "4040:4040"
+    volumes:
+      - ./:/opt/sparkfeaturestore
+
+  spark-worker-1:
+    image: sparkfeaturestore/spark:3.5.9
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    depends_on:
+      - spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 2G --webui-port 8081
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./:/opt/sparkfeaturestore
+
+  spark-worker-2:
+    image: sparkfeaturestore/spark:3.5.9
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    depends_on:
+      - spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 2G --webui-port 8082
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./:/opt/sparkfeaturestore
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2024-11-17T19-35-25Z
+    container_name: minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do
+        echo 'waiting for minio...'; sleep 2;
+      done &&
+      mc mb --ignore-existing local/bronze local/silver local/training local/models;
+      "
+
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: sparkfs
+      POSTGRES_PASSWORD: sparkfs
+      POSTGRES_DB: feature_store
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sparkfs -d feature_store"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  minio-data:
+  pg-data:

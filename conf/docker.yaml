@@ -1,0 +1,39 @@
+# Configuration for jobs running *inside* the docker-compose stack
+# (driver runs in the spark-master container; paths resolve against the
+# repo checkout mounted at /opt/sparkfeaturestore).
+environment: docker
+
+paths:
+  raw: data/raw
+  bronze: data/bronze
+  silver: data/silver
+  models: data/models
+
+spark:
+  app_name: sparkfeaturestore
+  default_profile: cluster
+  shuffle_partitions: 16
+  log_level: WARN
+  profiles:
+    local:
+      master: "local[*]"
+      driver_memory: 2g
+      executor_memory: 2g
+    cluster:
+      master: "spark://spark-master:7077"
+      driver_memory: 1g
+      executor_memory: 1g
+      executor_cores: 2
+    k8s:
+      master: "k8s://https://kubernetes.default.svc:443"
+      driver_memory: 2g
+      executor_memory: 4g
+      executor_cores: 2
+
+s3a:
+  enabled: true
+  endpoint: "http://minio:9000"
+  access_key: minioadmin
+  secret_key: minioadmin
+  path_style_access: true
+  ssl_enabled: false

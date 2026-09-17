@@ -1,0 +1,9 @@
+# Runtime
+pyspark==3.5.9
+pyyaml==6.0.2
+requests==2.32.3
+pyarrow==18.1.0
+# Dev
+pytest==8.3.4
+ruff==0.9.6
+black==25.1.0

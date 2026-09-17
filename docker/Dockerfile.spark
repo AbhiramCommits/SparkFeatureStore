@@ -1,0 +1,8 @@
+# Spark 3.5 image for sparkfeaturestore jobs.
+# Adds the Python deps needed by the driver beyond the stock apache/spark
+# image (which already bundles PySpark + PyArrow).
+FROM apache/spark:3.5.9-python3
+
+USER root
+RUN python3 -m pip install --no-cache-dir "pyyaml==6.0.2"
+USER spark

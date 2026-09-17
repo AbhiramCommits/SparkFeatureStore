@@ -1,0 +1,46 @@
+# Configuration for Spark on Kubernetes (production-style).
+# Jobs run via spark-submit --master k8s://... using the
+# sparkfeaturestore/spark:3.5.9 container image.
+environment: k8s
+
+paths:
+  raw: "s3a://datalake/raw"
+  bronze: "s3a://datalake/bronze"
+  silver: "s3a://datalake/silver"
+  models: "s3a://datalake/models"
+
+spark:
+  app_name: sparkfeaturestore
+  default_profile: k8s
+  shuffle_partitions: 64
+  log_level: WARN
+  profiles:
+    local:
+      master: "local[*]"
+      driver_memory: 2g
+      executor_memory: 2g
+    cluster:
+      master: "spark://spark-master:7077"
+      driver_memory: 1g
+      executor_memory: 1g
+      executor_cores: 2
+    k8s:
+      master: "k8s://https://kubernetes.default.svc:443"
+      driver_memory: 2g
+      executor_memory: 4g
+      executor_cores: 2
+  extra:
+    spark.kubernetes.namespace: "spark-jobs"
+    spark.kubernetes.authenticate.driver.serviceAccountName: "spark"
+    spark.kubernetes.container.image: "sparkfeaturestore/spark:3.5.9"
+    spark.kubernetes.container.image.pullPolicy: "IfNotPresent"
+    spark.kubernetes.executor.request.cores: "2"
+    spark.kubernetes.driver.request.cores: "1"
+
+s3a:
+  enabled: true
+  endpoint: "http://minio.minio.svc.cluster.local:9000"
+  access_key: minioadmin
+  secret_key: minioadmin
+  path_style_access: true
+  ssl_enabled: false

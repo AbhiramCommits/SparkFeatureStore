@@ -1,0 +1,24 @@
+# Data (downloaded datasets, parquet outputs)
+data/
+*.parquet
+*.crc
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS / editors
+.DS_Store
+*.log
+
+# Spark local state
+metastore_db/
+derby.log
+spark-warehouse/
