@@ -1,0 +1,63 @@
+# Raw spark-submit Job for the bronze ingest (Spark-on-K8s native
+# scheduler, cluster mode). The pod submits the app and exits; the driver
+# pod (label job=bronze-trips) does the work.
+#
+# Executor sizing is configurable here (EXECUTOR_INSTANCES / EXECUTOR_MEMORY
+# / EXECUTOR_CORES); the Makefile substitutes defaults.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-submit-bronze
+  namespace: spark-jobs
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: spark
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: sparkfeaturestore/spark:3.5.9
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - --master
+            - k8s://https://kubernetes.default.svc:443
+            - --deploy-mode
+            - cluster
+            - --name
+            - bronze-trips
+            - --conf
+            - spark.kubernetes.namespace=spark-jobs
+            - --conf
+            - spark.kubernetes.authenticate.driver.serviceAccountName=spark
+            - --conf
+            - spark.kubernetes.container.image=sparkfeaturestore/spark:3.5.9
+            - --conf
+            - spark.kubernetes.container.image.pullPolicy=IfNotPresent
+            - --conf
+            - spark.kubernetes.driver.label.job=bronze-trips
+            - --conf
+            - spark.kubernetes.driver.label.pipeline=sparkfeaturestore
+            - --conf
+            - spark.driver.memory=1g
+            - --conf
+            - spark.executor.memory=1g
+            - --conf
+            - spark.executor.instances=EXECUTOR_INSTANCES
+            - --conf
+            - spark.executor.cores=2
+            - local:///opt/sparkfeaturestore/ingest/bronze.py
+            - --env
+            - k8s
+            - --profile
+            - k8s
+          volumeMounts:
+            - name: conf
+              mountPath: /opt/sparkfeaturestore/conf/k8s.yaml
+              subPath: k8s.yaml
+      volumes:
+        - name: conf
+          configMap:
+            name: sparkfeaturestore-conf

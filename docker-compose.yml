@@ -3,8 +3,8 @@ name: sparkfeaturestore
 services:
   spark-master:
     build:
-      context: ./docker
-      dockerfile: Dockerfile.spark
+      context: .
+      dockerfile: docker/Dockerfile.spark
     image: sparkfeaturestore/spark:3.5.9
     container_name: spark-master
     hostname: spark-master

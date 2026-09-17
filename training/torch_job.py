@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(args.env)
     table_path = resolve_path(f"{cfg['paths']['silver']}/trip_features")
-    frames, counts = data.load_training_data(table_path)
+    frames, counts = data.load_training_data(table_path, env=args.env)
 
     torch.manual_seed(HYPERPARAMS["seed"])
     train_ds = TripsDataset(

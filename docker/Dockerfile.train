@@ -1,0 +1,27 @@
+# Training image: PyTorch (CPU wheel) + scikit-learn + pyarrow/s3fs,
+# no Spark, non-root user.
+#
+# * pinned base digest (multi-arch index digest)
+# * torch installed from the CPU wheel index (no CUDA bloat)
+# * deps installed in a builder stage and copied into the slim runtime
+#
+# Build from the repo root:
+#   docker build -f docker/Dockerfile.train -t sparkfeaturestore/train:0.1.0 .
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534 AS base
+
+FROM base AS deps
+COPY docker/requirements.lock /build/requirements.lock
+RUN grep -A20 "^# train" /build/requirements.lock | grep -v "^#" | grep -v "^--$" | grep -v "^$" | grep -v "torch" > /build/req-train.txt \
+ && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 \
+ && pip install --no-cache-dir -r /build/req-train.txt
+
+FROM base
+RUN useradd -m -u 1000 trainer
+COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY . /opt/sparkfeaturestore
+ENV ARTIFACTS_ROOT=/opt/artifacts \
+    PYTHONUNBUFFERED=1
+RUN mkdir -p /opt/artifacts && chown trainer:trainer /opt/artifacts
+USER trainer
+WORKDIR /opt/sparkfeaturestore
+ENTRYPOINT ["python3"]

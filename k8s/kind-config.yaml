@@ -1,0 +1,14 @@
+# kind cluster config: expose MinIO + Postgres node ports on the host so
+# the host can seed data and verify the registry.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: sparkfeaturestore
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30900
+        hostPort: 30900
+        protocol: TCP
+      - containerPort: 30432
+        hostPort: 30432
+        protocol: TCP

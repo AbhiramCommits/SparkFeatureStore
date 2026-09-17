@@ -1,0 +1,59 @@
+# spark-submit Job for the silver feature build (cluster mode).
+# Same shape as spark-submit-bronze.yaml; submits features/build_silver.py.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-submit-features
+  namespace: spark-jobs
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: spark
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: sparkfeaturestore/spark:3.5.9
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - --master
+            - k8s://https://kubernetes.default.svc:443
+            - --deploy-mode
+            - cluster
+            - --name
+            - silver-features
+            - --conf
+            - spark.kubernetes.namespace=spark-jobs
+            - --conf
+            - spark.kubernetes.authenticate.driver.serviceAccountName=spark
+            - --conf
+            - spark.kubernetes.container.image=sparkfeaturestore/spark:3.5.9
+            - --conf
+            - spark.kubernetes.container.image.pullPolicy=IfNotPresent
+            - --conf
+            - spark.kubernetes.driver.label.job=silver-features
+            - --conf
+            - spark.kubernetes.driver.label.pipeline=sparkfeaturestore
+            - --conf
+            - spark.driver.memory=1g
+            - --conf
+            - spark.executor.memory=1g
+            - --conf
+            - spark.executor.instances=EXECUTOR_INSTANCES
+            - --conf
+            - spark.executor.cores=2
+            - local:///opt/sparkfeaturestore/features/build_silver.py
+            - --env
+            - k8s
+            - --profile
+            - k8s
+          volumeMounts:
+            - name: conf
+              mountPath: /opt/sparkfeaturestore/conf/k8s.yaml
+              subPath: k8s.yaml
+      volumes:
+        - name: conf
+          configMap:
+            name: sparkfeaturestore-conf

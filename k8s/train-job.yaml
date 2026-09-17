@@ -1,0 +1,54 @@
+# Training Job: reads the silver tables from S3 (MinIO locally / S3 in AWS
+# via IRSA) with pyarrow, trains, writes artifacts to an emptyDir and
+# registers the run in Postgres model_runs.
+#
+# FRAMEWORK_VALUE is substituted by the Makefile (sklearn | torch).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: train-job
+  namespace: spark-jobs
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: train
+          image: sparkfeaturestore/train:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FRAMEWORK
+              value: "FRAMEWORK_VALUE"
+            - name: ARTIFACTS_ROOT
+              value: /opt/artifacts
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ "$FRAMEWORK" = "torch" ]; then
+                exec python3 /opt/sparkfeaturestore/training/torch_job.py --env k8s --epochs 8
+              else
+                exec python3 /opt/sparkfeaturestore/training/sklearn_job.py --env k8s
+              fi
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 7Gi
+          volumeMounts:
+            - name: artifacts
+              mountPath: /opt/artifacts
+            - name: conf
+              mountPath: /opt/sparkfeaturestore/conf/k8s.yaml
+              subPath: k8s.yaml
+      volumes:
+        - name: artifacts
+          emptyDir: {}
+        - name: conf
+          configMap:
+            name: sparkfeaturestore-conf

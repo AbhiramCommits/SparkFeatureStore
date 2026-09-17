@@ -1,0 +1,51 @@
+# ConfigMap with the k8s environment config. The image bakes the same
+# file in; this overlay lets production change conf without rebuilding.
+# Regenerate with:
+#   kubectl create configmap sparkfeaturestore-conf -n spark-jobs \
+#     --from-file=k8s.yaml=conf/k8s.yaml --dry-run=client -o yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sparkfeaturestore-conf
+  namespace: spark-jobs
+data:
+  k8s.yaml: |
+    environment: k8s
+
+    paths:
+      raw: "s3a://datalake/raw"
+      bronze: "s3a://datalake/bronze"
+      silver: "s3a://datalake/silver"
+      models: "s3a://datalake/models"
+
+    spark:
+      app_name: sparkfeaturestore
+      default_profile: k8s
+      shuffle_partitions: 64
+      log_level: WARN
+      profiles:
+        k8s:
+          master: "k8s://https://kubernetes.default.svc:443"
+          driver_memory: 1g
+          executor_memory: 1g
+          executor_cores: 2
+      extra:
+        spark.kubernetes.namespace: "spark-jobs"
+        spark.kubernetes.authenticate.driver.serviceAccountName: "spark"
+        spark.kubernetes.container.image: "sparkfeaturestore/spark:3.5.9"
+        spark.kubernetes.container.image.pullPolicy: "IfNotPresent"
+
+    s3a:
+      enabled: true
+      endpoint: "http://minio.spark-jobs.svc.cluster.local:9000"
+      access_key: minioadmin
+      secret_key: minioadmin
+      path_style_access: true
+      ssl_enabled: false
+
+    postgres:
+      host: postgres.spark-jobs.svc.cluster.local
+      port: 5432
+      database: feature_store
+      user: sparkfs
+      password: sparkfs

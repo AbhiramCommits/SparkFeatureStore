@@ -20,7 +20,6 @@ from sklearn.ensemble import HistGradientBoostingRegressor  # noqa: E402
 from sklearn.impute import SimpleImputer  # noqa: E402
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error  # noqa: E402
 from sklearn.pipeline import Pipeline  # noqa: E402
-from sklearn.preprocessing import OneHotEncoder  # noqa: E402
 
 from common.config import load_config, resolve_path  # noqa: E402
 from common.logging import get_logger, setup_logging  # noqa: E402
@@ -34,6 +33,7 @@ FEATURE_GROUPS = ["pickup_zone_demand", "driver_trip_history", "trip_features"]
 
 HYPERPARAMS = {
     "model": "HistGradientBoostingRegressor",
+    "categorical_features": "native (no OHE expansion)",
     "max_iter": 400,
     "learning_rate": 0.08,
     "max_leaf_nodes": 31,
@@ -42,6 +42,13 @@ HYPERPARAMS = {
 
 
 def build_pipeline() -> Pipeline:
+    """Imputation + HistGradientBoosting with NATIVE categorical support.
+
+    HistGradientBoostingRegressor (sklearn >= 1.2) handles categorical
+    features natively -- unlike OneHotEncoder this does not expand the
+    1.8M-row matrix by ~220 dummy columns, which keeps the job within the
+    memory limits of small k8s pods.
+    """
     preprocessor = ColumnTransformer(
         transformers=[
             (
@@ -51,24 +58,23 @@ def build_pipeline() -> Pipeline:
             ),
             (
                 "cat",
-                Pipeline(
-                    [
-                        ("imputer", SimpleImputer(strategy="most_frequent")),
-                        (
-                            "ohe",
-                            OneHotEncoder(
-                                handle_unknown="ignore", min_frequency=20, sparse_output=False
-                            ),
-                        ),
-                    ]
-                ),
+                Pipeline([("imputer", SimpleImputer(strategy="most_frequent"))]),
                 data.CATEGORICAL_FEATURES,
             ),
         ]
     )
+    # ColumnTransformer emits numeric features first, then categoricals
+    # (both branches keep column order), so categorical indices in the
+    # transformed array are contiguous after the numeric block.
+    cat_indices = list(range(len(data.NUMERIC_FEATURES), len(data.FEATURE_COLUMNS)))
     model = HistGradientBoostingRegressor(
+        categorical_features=cat_indices,
         random_state=42,
-        **{k: v for k, v in HYPERPARAMS.items() if k not in ("model", "random_state")},
+        **{
+            k: v
+            for k, v in HYPERPARAMS.items()
+            if k not in ("model", "random_state", "categorical_features")
+        },
     )
     return Pipeline([("prep", preprocessor), ("reg", model)])
 
@@ -91,13 +97,14 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(args.env)
     table_path = resolve_path(f"{cfg['paths']['silver']}/trip_features")
-    frames, counts = data.load_training_data(table_path)
+    frames, counts = data.load_training_data(table_path, env=args.env)
 
     pipeline = build_pipeline()
     log.info("Fitting %s on %d train rows", HYPERPARAMS["model"], counts["train"])
+    x_train = frames["train"][data.FEATURE_COLUMNS].astype("float32")
     pipeline.fit(
-        frames["train"][data.FEATURE_COLUMNS],
-        frames["train"][data.LABEL_COL],
+        x_train,
+        frames["train"][data.LABEL_COL].astype("float32"),
     )
 
     baseline = float(frames["train"][data.LABEL_COL].mean())
@@ -119,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         "row_counts": counts,
     }
     for split in ("val", "test"):
-        preds = pipeline.predict(frames[split][data.FEATURE_COLUMNS])
+        preds = pipeline.predict(frames[split][data.FEATURE_COLUMNS].astype("float32"))
         metrics[split] = metrics_for(frames[split][data.LABEL_COL].to_numpy(), preds)
 
     run = artifacts.ArtifactRun(FRAMEWORK, run_id=args.run_id).ensure()

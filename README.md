@@ -133,6 +133,26 @@ data/bronze/trips/
 └── event_date=2023-01-31/
 ```
 
+## Kubernetes
+
+Packaged images (`docker/Dockerfile.spark` with S3A jars, non-root,
+digest-pinned; `docker/Dockerfile.train` with torch-cpu + sklearn, no
+Spark) and native Spark-on-K8s manifests in `k8s/` (namespace, RBAC for
+the driver, spark-submit Jobs in cluster mode, training Job, daily
+CronJob, Postgres StatefulSet, MinIO for the local proof). Verified
+end-to-end on kind:
+
+```bash
+make k8s-up         # kind cluster + images + manifests + seed raw data
+make k8s-features   # bronze + silver on the cluster (S3A -> MinIO)
+make k8s-train      # FRAMEWORK=sklearn (default) | torch
+make k8s-down
+```
+
+See `docs/deploy-aws.md` for the AWS specifics (S3 layout, IRSA, EKS
+sizing) -- the only changes between local and AWS are the config profile
+and the secret source.
+
 ## Configuration
 
 | Environment | Config file | Purpose |

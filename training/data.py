@@ -11,8 +11,10 @@ construction.
 from __future__ import annotations
 
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 
+from common.config import load_config, resolve_path
 from common.logging import get_logger
 
 log = get_logger(__name__)
@@ -51,8 +53,41 @@ SPLIT_WINDOWS: dict[str, tuple[str, str]] = {
 }
 
 
+def _read_table(path: str, env: str | None = None, columns: list[str] | None = None) -> pa.Table:
+    """Read a parquet table from the local FS or S3/S3A.
+
+    S3 behavior comes entirely from conf/<env>.yaml: with an ``s3a.endpoint``
+    configured (local MinIO) an explicit filesystem is built; with no
+    endpoint the default AWS S3 filesystem is used and credentials come from
+    the pod identity (IRSA) or the standard AWS credential chain -- so only
+    the config profile changes between local and AWS.
+    """
+    resolved = resolve_path(path)
+    if not (resolved.startswith("s3://") or resolved.startswith("s3a://")):
+        return pq.read_table(resolved, columns=columns)
+
+    cfg = load_config(env)
+    s3 = cfg.get("s3a", {}) or {}
+    endpoint = s3.get("endpoint") or ""
+    bucket_key = resolved.split("://", 1)[1]
+    fs_kwargs: dict = {}
+    if endpoint:
+        scheme = endpoint.split("://", 1)[0] if "://" in endpoint else "http"
+        host = endpoint.split("://", 1)[1] if "://" in endpoint else endpoint
+        fs_kwargs["endpoint_override"] = host
+        fs_kwargs["scheme"] = scheme
+        if s3.get("access_key"):
+            fs_kwargs["access_key"] = s3["access_key"]
+        if s3.get("secret_key"):
+            fs_kwargs["secret_key"] = s3["secret_key"]
+    fs = pa.fs.S3FileSystem(**fs_kwargs)
+    return pq.read_table(bucket_key, filesystem=fs, columns=columns)
+
+
 def load_training_data(
-    path: str, split: dict[str, tuple[str, str]] | None = None
+    path: str,
+    split: dict[str, tuple[str, str]] | None = None,
+    env: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, int]]:
     """Return ({split: frame}, {split: row_count}) for the trip_features table.
 
@@ -61,7 +96,14 @@ def load_training_data(
     removed (identically for both frameworks).
     """
     split = split or SPLIT_WINDOWS
-    table = pq.read_table(path)
+    # select columns at read time to keep the in-memory frame small
+    # (hour_of_day is derived from pickup_datetime, not stored)
+    read_columns = [c for c in FEATURE_COLUMNS if c != "hour_of_day"] + [
+        LABEL_COL,
+        DATE_COL,
+        TS_COL,
+    ]
+    table = _read_table(path, env=env, columns=read_columns)
     df = table.to_pandas()
 
     first_start = min(lo for lo, _ in split.values())

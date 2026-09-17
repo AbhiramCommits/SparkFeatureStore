@@ -1,8 +1,38 @@
-# Spark 3.5 image for sparkfeaturestore jobs.
-# Adds the Python deps needed by the driver beyond the stock apache/spark
-# image (which already bundles PySpark + PyArrow).
-FROM apache/spark:3.5.9-python3
+# Spark 3.5 image for the sparkfeaturestore pipeline.
+#
+# * pinned base digest (multi-arch index digest)
+# * multi-stage: dependency layer cached separately from code
+# * non-root user (spark, uid 185) in the runtime stage
+# * S3A support: hadoop-aws + aws-java-sdk-bundle jars are bundled with the
+#   base image; the build FAILS if they are missing, so S3A is guaranteed.
+#
+# Build from the repo root:
+#   docker build -f docker/Dockerfile.spark -t sparkfeaturestore/spark:3.5.9 .
+FROM apache/spark:3.5.9-python3@sha256:af02a459c8706e031c835c16f9db3c463816776e2543dd0f828af65606bcf392 AS base
 
+# ---- S3A jars (base image does not bundle them) ---------------------------
+FROM alpine:3.20 AS s3jars
+RUN apk add --no-cache ca-certificates \
+ && mkdir -p /jars \
+ && wget -q -P /jars \
+      https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+ && wget -q -P /jars \
+      https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.367/aws-java-sdk-bundle-1.12.367.jar
+
+# ---- dependency layer -----------------------------------------------------
+FROM base AS deps
 USER root
-RUN python3 -m pip install --no-cache-dir "pyyaml==6.0.2" "psycopg[binary]==3.2.3"
+COPY docker/requirements.lock /build/requirements.lock
+RUN grep -A3 "^# spark-driver" /build/requirements.lock | grep -v "^#" | grep -v "^--$" | grep -v "^$" > /build/req-spark.txt \
+ && python3 -m pip install --no-cache-dir -r /build/req-spark.txt
+
+# ---- runtime --------------------------------------------------------------
+FROM base AS runtime
+USER root
+COPY --from=deps /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=s3jars /jars/hadoop-aws-3.3.4.jar /jars/aws-java-sdk-bundle-1.12.367.jar /opt/spark/jars/
+COPY . /opt/sparkfeaturestore
+RUN (ls /opt/spark/jars/ | grep -qE "^hadoop-aws-" && ls /opt/spark/jars/ | grep -qE "^aws-java-sdk") \
+ && echo "S3A jars present" || (echo "ERROR: hadoop-aws / aws-java-sdk jars missing" && exit 1)
 USER spark
+WORKDIR /opt/sparkfeaturestore

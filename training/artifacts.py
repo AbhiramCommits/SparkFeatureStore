@@ -13,6 +13,7 @@ and registers a row in ``model_runs`` with a foreign key to the
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +25,7 @@ from common.logging import get_logger
 
 log = get_logger(__name__)
 
-ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
+ARTIFACTS_ROOT = Path(os.environ.get("ARTIFACTS_ROOT", REPO_ROOT / "artifacts"))
 
 TABLE_NAME = "model_runs"
 JUNCTION_TABLE = "model_run_features"

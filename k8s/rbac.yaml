@@ -1,0 +1,38 @@
+# RBAC for the Spark-on-K8s native scheduler: the driver pod (and the
+# spark-submit Job pods) run with the "spark" ServiceAccount and need to
+# create/delete executor pods, services and configmaps in this namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark
+  namespace: spark-jobs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-role
+  namespace: spark-jobs
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "persistentvolumeclaims"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-role-binding
+  namespace: spark-jobs
+subjects:
+  - kind: ServiceAccount
+    name: spark
+    namespace: spark-jobs
+roleRef:
+  kind: Role
+  name: spark-role
+  apiGroup: rbac.authorization.k8s.io

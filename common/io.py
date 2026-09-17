@@ -46,5 +46,12 @@ def write_parquet(
 
 
 def table_path(base: str | Path, *parts: str) -> str:
-    """Join a base path with table parts, e.g. table_path("data/bronze", "trips")."""
+    """Join a base path with table parts, e.g. table_path("data/bronze", "trips").
+
+    URL-safe: s3a://datalake/bronze + trips -> s3a://datalake/bronze/trips
+    (pathlib would collapse the double slash of the scheme).
+    """
+    base_str = str(base)
+    if "://" in base_str:
+        return "/".join([base_str.rstrip("/")] + [str(p) for p in parts])
     return str(Path(base).joinpath(*parts))

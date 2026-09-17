@@ -1,0 +1,16 @@
+# Keep the docker build context small: data, venvs and generated
+# artifacts never belong in an image.
+.git
+.venv
+__pycache__
+*.pyc
+data
+artifacts
+bench/results
+docs
+tests
+k8s
+conf/local.yaml
+conf/docker.yaml
+*.md
+.DS_Store
