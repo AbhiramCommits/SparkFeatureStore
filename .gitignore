@@ -22,3 +22,6 @@ dist/
 metastore_db/
 derby.log
 spark-warehouse/
+
+# Benchmark outputs (generated)
+bench/results/*.csv

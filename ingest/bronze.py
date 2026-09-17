@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # noqa: E402
@@ -26,8 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # noqa: E402
 from pyspark.sql import DataFrame  # noqa: E402
 from pyspark.sql import functions as F
 
+from common import atomic, retry  # noqa: E402
 from common.config import load_config, resolve_path  # noqa: E402
-from common.io import read_parquet, table_path, write_parquet  # noqa: E402
+from common.io import read_parquet, table_path  # noqa: E402
 from common.logging import get_logger, setup_logging  # noqa: E402
 from common.spark import build_spark  # noqa: E402
 
@@ -115,7 +117,6 @@ def run(
     bronze_path = bronze_path or table_path(cfg["paths"]["bronze"], "trips")
 
     spark = build_spark("bronze-trips", env=env, profile=profile)
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
     df = read_parquet(spark, raw_path)
     raw_rows = df.count()
@@ -131,7 +132,17 @@ def run(
     bronze_rows = df.count()
     log.info("Bronze rows after transform: %d", bronze_rows)
 
-    write_parquet(df, bronze_path, partition_by=[EVENT_DATE_COL], mode="overwrite")
+    # Staging + atomic promotion: downstream readers never see a
+    # half-written partition (see common/atomic.py).
+    retry.retry(
+        lambda: atomic.atomic_write_parquet(
+            spark,
+            df,
+            bronze_path,
+            partition_by=[EVENT_DATE_COL],
+            run_id=f"bronze-{uuid.uuid4().hex[:12]}",
+        )
+    )
 
     written = spark.read.parquet(resolve_path(bronze_path))
     written_rows = written.count()

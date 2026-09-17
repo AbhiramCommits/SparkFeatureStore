@@ -31,19 +31,41 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     git_sha TEXT,
     started_at TIMESTAMPTZ NOT NULL,
     finished_at TIMESTAMPTZ,
-    status TEXT NOT NULL DEFAULT 'running'
+    status TEXT NOT NULL DEFAULT 'running',
+    run_key TEXT
 )
 """
+
+# Idempotency: at most ONE successful run per run_key (a deterministic hash
+# of feature_group + git sha + input paths). Failed runs do not block a
+# retry; a forced rebuild supersedes the previous success.
+MIGRATIONS = [
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN IF NOT EXISTS run_key TEXT",
+    (
+        f"CREATE UNIQUE INDEX IF NOT EXISTS feature_runs_run_key_success_uniq "
+        f"ON {TABLE_NAME} (run_key) WHERE status = 'success'"
+    ),
+]
 
 INSERT_SQL = f"""
 INSERT INTO {TABLE_NAME}
     (run_id, feature_group, row_count, input_paths, output_path, spark_conf_json,
-     git_sha, started_at, finished_at, status)
-VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)
+     git_sha, started_at, finished_at, status, run_key)
+VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s)
 """
 
 FINISH_SQL = f"""
 UPDATE {TABLE_NAME} SET status = %s, row_count = %s, finished_at = %s WHERE run_id = %s
+"""
+
+COMPLETED_SQL = f"""
+SELECT 1 FROM {TABLE_NAME} WHERE run_key = %s AND status = 'success' LIMIT 1
+"""
+
+SUPERSEDE_SQL = f"""
+UPDATE {TABLE_NAME}
+SET status = 'superseded', finished_at = %s
+WHERE run_key = %s AND status = 'success'
 """
 
 
@@ -69,6 +91,8 @@ def connect(pg: dict[str, Any] | None = None, env: str | None = None):
 def ensure_table(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(DDL)
+        for statement in MIGRATIONS:
+            cur.execute(statement)
     conn.commit()
 
 
@@ -92,6 +116,7 @@ def start_run(
     input_paths: list[str],
     output_path: str,
     spark_conf: dict[str, str],
+    run_key: str | None = None,
 ) -> str:
     """Insert a 'running' row and return its run_id."""
     run_id = str(uuid.uuid4())
@@ -110,11 +135,29 @@ def start_run(
                 started_at,
                 None,
                 "running",
+                run_key,
             ),
         )
     conn.commit()
-    log.info("Registered feature run %s for %s", run_id, feature_group)
+    log.info("Registered feature run %s for %s (run_key=%s)", run_id, feature_group, run_key)
     return run_id
+
+
+def is_completed(conn, run_key: str) -> bool:
+    """True when a successful run already exists for ``run_key``."""
+    if not run_key:
+        return False
+    with conn.cursor() as cur:
+        cur.execute(COMPLETED_SQL, (run_key,))
+        return cur.fetchone() is not None
+
+
+def supersede(conn, run_key: str) -> None:
+    """Mark previous successful runs for ``run_key`` as superseded (--force)."""
+    with conn.cursor() as cur:
+        cur.execute(SUPERSEDE_SQL, (datetime.now(timezone.utc), run_key))
+    conn.commit()
+    log.info("Superseded previous successful run for run_key=%s", run_key)
 
 
 def finish_run(conn, run_id: str, status: str, row_count: int | None) -> None:

@@ -24,7 +24,9 @@ Run on the docker cluster:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # noqa: E402
@@ -33,8 +35,9 @@ import yaml  # noqa: E402
 from pyspark.sql import DataFrame  # noqa: E402
 from pyspark.sql import functions as F
 
+from common import atomic, retry  # noqa: E402
 from common.config import CONF_DIR, load_config, resolve_path  # noqa: E402
-from common.io import read_parquet, table_path, write_parquet  # noqa: E402
+from common.io import read_parquet, table_path  # noqa: E402
 from common.logging import get_logger, setup_logging  # noqa: E402
 from common.spark import build_spark  # noqa: E402
 from features import point_in_time as pit  # noqa: E402
@@ -187,6 +190,16 @@ def compute_trip_features(
     return out
 
 
+def group_run_key(feature_group: str, input_paths: list[str], git_sha: str) -> str:
+    """Deterministic identity of a logical run: group + code version + inputs."""
+    digest = hashlib.sha256()
+    digest.update(feature_group.encode())
+    digest.update((git_sha or "uncommitted").encode())
+    for p in sorted(input_paths):
+        digest.update(p.encode())
+    return digest.hexdigest()[:32]
+
+
 def build_and_register(
     spark,
     conn,
@@ -194,23 +207,58 @@ def build_and_register(
     df: DataFrame,
     input_paths: list[str],
     output: str,
-) -> int:
-    """Cache, count, write partitioned parquet, and record the run in Postgres."""
-    spark_conf = dict(spark.sparkContext.getConf().getAll())
+    run_key: str,
+    force: bool = False,
+) -> int | None:
+    """Count, write via staging + atomic promote, and record the run.
+
+    A completed ``run_key`` makes this a no-op unless ``force`` is set.
+    Writes never leave a half-written partition visible: data lands in a
+    staging dir and is promoted partition-by-partition (see common/atomic).
+    """
     output_path = resolve_path(output)
-    run_id = registry.start_run(conn, name, input_paths, output_path, spark_conf) if conn else None
+    spark_conf = dict(spark.sparkContext.getConf().getAll())
+    if conn and run_key and not force and registry.is_completed(conn, run_key):
+        log.info(
+            "Feature group '%s': completed run exists (run_key=%s) -- no-op; "
+            "pass --force to rebuild",
+            name,
+            run_key,
+        )
+        return None
+    if conn and run_key and force:
+        registry.supersede(conn, run_key)
+
+    run_id = None
+    if conn:
+        run_id = retry.retry(
+            lambda: registry.start_run(conn, name, input_paths, output_path, spark_conf, run_key)
+        )
     try:
         df.cache()
-        n = df.count()
-        write_parquet(df, output, partition_by=[EVENT_DATE_COL], mode="overwrite")
+        n = retry.retry(lambda: df.count())
+        retry.retry(
+            lambda: atomic.atomic_write_parquet(
+                spark,
+                df,
+                output,
+                partition_by=[EVENT_DATE_COL],
+                run_id=run_id or uuid.uuid4().hex,
+            )
+        )
         if conn:
-            registry.finish_run(conn, run_id, "success", n)
+            retry.retry(lambda: registry.finish_run(conn, run_id, "success", n))
         log.info("Feature group '%s': %d rows -> %s", name, n, output_path)
         return n
     except Exception:
         if conn:
-            registry.finish_run(conn, run_id, "failed", None)
+            try:
+                retry.retry(lambda: registry.finish_run(conn, run_id, "failed", None))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not record failed run %s: %s", run_id, exc)
         raise
+    finally:
+        df.unpersist()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,6 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-registry", action="store_true", help="Skip Postgres feature_runs registration"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild even when a completed run exists for the same run_key",
     )
     return parser
 
@@ -246,11 +299,10 @@ def main(argv: list[str] | None = None) -> int:
         wanted = set(groups)
 
     spark = build_spark("silver-features", env=args.env, profile=args.profile)
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
     conn = None
     if not args.no_registry:
-        conn = registry.connect(env=args.env)
+        conn = retry.retry(lambda: registry.connect(env=args.env))
         registry.ensure_table(conn)
         log.info("Connected to Postgres feature_runs registry")
 
@@ -258,52 +310,80 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Reading bronze trips from %s", bronze_path)
     bronze = read_parquet(spark, bronze_path)
 
-    counts: dict[str, int] = {}
+    git_sha = registry.current_git_sha() or "uncommitted"
+    counts: dict[str, object] = {}
 
     demand_spec = groups["pickup_zone_demand"]
     demand_output = resolve_feature_output(cfg, demand_spec["output"])
-    demand = (
-        compute_pickup_zone_demand(bronze, demand_spec) if "pickup_zone_demand" in wanted else None
-    )
-    if demand is not None:
-        counts["pickup_zone_demand"] = build_and_register(
-            spark, conn, "pickup_zone_demand", demand, [bronze_path], demand_output
-        )
     demand_path = resolve_path(demand_output)
+    demand_key = group_run_key("pickup_zone_demand", [bronze_path], git_sha)
+    demand = None
+    if "pickup_zone_demand" in wanted:
+        if conn and not args.force and registry.is_completed(conn, demand_key):
+            log.info("pickup_zone_demand: skipping (completed run, run_key=%s)", demand_key)
+            counts["pickup_zone_demand"] = "skipped (no-op)"
+        else:
+            demand = compute_pickup_zone_demand(bronze, demand_spec)
+            counts["pickup_zone_demand"] = build_and_register(
+                spark,
+                conn,
+                "pickup_zone_demand",
+                demand,
+                [bronze_path],
+                demand_output,
+                demand_key,
+                args.force,
+            )
 
     driver_spec = groups["driver_trip_history"]
     driver_output = resolve_feature_output(cfg, driver_spec["output"])
-    driver = (
-        compute_driver_trip_history(bronze, driver_spec)
-        if "driver_trip_history" in wanted
-        else None
-    )
-    if driver is not None:
-        counts["driver_trip_history"] = build_and_register(
-            spark, conn, "driver_trip_history", driver, [bronze_path], driver_output
-        )
     driver_path = resolve_path(driver_output)
+    driver_key = group_run_key("driver_trip_history", [bronze_path], git_sha)
+    driver = None
+    if "driver_trip_history" in wanted:
+        if conn and not args.force and registry.is_completed(conn, driver_key):
+            log.info("driver_trip_history: skipping (completed run, run_key=%s)", driver_key)
+            counts["driver_trip_history"] = "skipped (no-op)"
+        else:
+            driver = compute_driver_trip_history(bronze, driver_spec)
+            counts["driver_trip_history"] = build_and_register(
+                spark,
+                conn,
+                "driver_trip_history",
+                driver,
+                [bronze_path],
+                driver_output,
+                driver_key,
+                args.force,
+            )
 
     if "trip_features" in wanted:
-        demand_df = demand if demand is not None else read_parquet(spark, demand_path)
-        driver_df = driver if driver is not None else read_parquet(spark, driver_path)
         trip_spec = groups["trip_features"]
         trip_output = resolve_feature_output(cfg, trip_spec["output"])
-        trips = compute_trip_features(bronze, demand_df, driver_df, trip_spec)
-        trips.printSchema()
-        counts["trip_features"] = build_and_register(
-            spark,
-            conn,
-            "trip_features",
-            trips,
-            [bronze_path, demand_path, driver_path],
-            trip_output,
-        )
+        trip_key = group_run_key("trip_features", [bronze_path, demand_path, driver_path], git_sha)
+        if conn and not args.force and registry.is_completed(conn, trip_key):
+            log.info("trip_features: skipping (completed run, run_key=%s)", trip_key)
+            counts["trip_features"] = "skipped (no-op)"
+        else:
+            demand_df = demand if demand is not None else read_parquet(spark, demand_path)
+            driver_df = driver if driver is not None else read_parquet(spark, driver_path)
+            trips = compute_trip_features(bronze, demand_df, driver_df, trip_spec)
+            trips.printSchema()
+            counts["trip_features"] = build_and_register(
+                spark,
+                conn,
+                "trip_features",
+                trips,
+                [bronze_path, demand_path, driver_path],
+                trip_output,
+                trip_key,
+                args.force,
+            )
 
     log.info("=" * 64)
     log.info("Silver build complete. Row counts per feature group:")
     for name, n in counts.items():
-        log.info("  %-20s %d", name, n)
+        log.info("  %-20s %s", name, n)
 
     if conn:
         conn.close()

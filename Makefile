@@ -9,7 +9,7 @@ else
 RUN_PY := uv run
 endif
 
-.PHONY: help up down fetch bronze bronze-local silver silver-local test lint format venv
+.PHONY: help up down fetch bronze bronze-local silver silver-local bench-skew bench-partitions test lint format venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -48,6 +48,22 @@ silver: ## Build silver feature groups on the docker spark cluster (make up && m
 
 silver-local: ## Build silver features in local[*] mode on the host
 	$(RUN_PY) features/build_silver.py --env local --profile local
+
+bench-skew: ## Skew benchmark: salted vs unsalted aggregation (Spark REST metrics)
+	docker compose exec -T spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--deploy-mode client \
+		/opt/sparkfeaturestore/bench/skew_bench.py --env docker
+
+bench-partitions: ## Sweep spark.sql.shuffle.partitions x AQE (8 runs, ~10-15 min)
+	@for p in 50 200 800 2000; do \
+	  for a in true false; do \
+	    docker compose exec -T spark-master /opt/spark/bin/spark-submit \
+	      --master spark://spark-master:7077 --deploy-mode client \
+	      /opt/sparkfeaturestore/bench/partition_sweep.py --env docker \
+	      --partitions $$p --aqe $$a; \
+	  done; \
+	done
 
 test: ## Run unit tests
 	$(RUN_PY) -m pytest tests -q
